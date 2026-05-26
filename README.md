@@ -45,10 +45,10 @@
 - QEMU（路径见 `Jenkinsfile` 中 `QEMU_PATH`）
 - 交叉工具链（RISC-V、AArch64）
 - Linux 内核源码（`ci.yaml` 中 `KDIR`）
-- Python 3 + `pyyaml` + `pyserial`
+- Python 3 + `pyserial`（`ci_config.py` 仅使用标准库，无需 PyYAML）
 
 ```bash
-pip3 install pyyaml pyserial
+pip3 install pyserial
 ```
 
 ## 初始化新 Git 仓库
@@ -121,7 +121,17 @@ python3 ptest_runner.py \
 | QEMU | `make ci-run` + socket | 相同 |
 | 触发 | PR / push | Jenkins 手动参数化 |
 
+## 配置来源
+
+与 hvisor 主 Jenkins CI **完全一致**，clone 后使用：
+
+- `hvisor-src/jenkins/ci.yaml` — KDIR、测试平台配置
+- `hvisor-src/jenkins/ci_config.py` — 读取 ci.yaml
+- `hvisor-src/jenkins/ci_runner.py` — `zone0_start`（`make ci-run`）
+
+`hvisor_new_test/ci.yaml` 仅为本地参考，**运行时不再使用**。
+
 ## 配置修改
 
-- 工具链 / QEMU 路径：编辑 `Jenkinsfile` 的 `environment` 块
-- 内核路径 `KDIR`：编辑 `ci.yaml`
+- 工具链 / QEMU / TEST_IMG 路径：编辑 `Jenkinsfile` 的 `environment` 块（与主 CI 相同）
+- 内核路径 `KDIR`：修改 clone 下来的 `hvisor-src/jenkins/ci.yaml`

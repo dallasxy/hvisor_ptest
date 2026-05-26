@@ -47,11 +47,28 @@ case "${BID}" in
     *) echo "invalid BID: ${BID}"; exit 1 ;;
 esac
 
-if [ -f "${REPO_ROOT}/ci.yaml" ]; then
-    KDIR="$(python3 "${REPO_ROOT}/ci_config.py" get-bid --bid "${BID}" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['build_args'].get('KDIR',''))" || true)"
-    TARCH="$(python3 "${REPO_ROOT}/ci_config.py" get-bid --bid "${BID}" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['build_args'].get('TARCH',''))" || true)"
-fi
-KDIR="${KDIR:-}"
+# Same source as hvisor main Jenkins CI: hvisor-src/jenkins/ci.yaml via ci_config.py
+load_bid_config() {
+    local ci_runner="${HVISOR_SRC}/jenkins/ci_config.py"
+    if [ ! -f "${ci_runner}" ]; then
+        echo "ERROR: missing ${ci_runner}"
+        exit 1
+    fi
+    local json
+    json="$(python3 "${ci_runner}" get-bid --bid "${BID}")" || {
+        echo "ERROR: BID=${BID} not found in ${HVISOR_SRC}/jenkins/ci.yaml"
+        exit 1
+    }
+    KDIR="$(echo "${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['build_args'].get('KDIR',''))")"
+    TARCH="$(echo "${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['build_args'].get('TARCH',''))")"
+    if [ -z "${KDIR}" ]; then
+        echo "ERROR: KDIR missing for BID=${BID} in ${HVISOR_SRC}/jenkins/ci.yaml"
+        exit 1
+    fi
+    echo "=== BID config: KDIR=${KDIR} TARCH=${TARCH:-${ARCH}} ==="
+}
+
+load_bid_config
 TARCH="${TARCH:-${ARCH}}"
 
 normalize_tool_arch() {
@@ -97,10 +114,6 @@ build_hvisor() {
 }
 
 build_hvisor_tool() {
-    if [ -z "${KDIR}" ]; then
-        echo "ERROR: KDIR not set for BID=${BID}; check ci.yaml"
-        exit 1
-    fi
     echo "=== Building hvisor-tool TARCH=${TARCH} KDIR=${KDIR} ==="
     cd "${HVISOR_SRC}"
     toolchain_path_shell

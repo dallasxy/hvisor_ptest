@@ -65,6 +65,7 @@ pipeline {
         HVISOR_SRC = "${WORKSPACE}/hvisor-src"
         HVISOR_TOOL_URL = 'https://github.com/syswonder/hvisor-tool.git'
         HVISOR_TOOL_PATH = 'hvisor-tool'
+        TEST_IMG_BASE = '/home/light/DEMO/syswonder/test_img'
         RUST_HOME = '/usr/local/rustup'
         CARGO_HOME = '/usr/local/cargo'
         QEMU_PATH = '/home/light/DEMO/qemu-9.2.3/build'

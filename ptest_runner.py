@@ -9,8 +9,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ci_config import get_bid_entry, load_ci, parse_bid
-
 VALID_PTESTS = frozenset({"irq", "net", "mem", "blk"})
 
 PTEST_BENCH: dict[str, tuple[str, str, float, str]] = {
@@ -25,13 +23,22 @@ HOME_DIR: dict[str, str] = {
 }
 
 
+def parse_bid(bid: str) -> tuple[str, str]:
+    parts = bid.strip().split("/", 1)
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise ValueError(f"invalid BID: {bid!r}")
+    return parts[0].strip(), parts[1].strip()
+
+
 def setup_hvisor_jenkins(workspace: Path) -> None:
     jenkins_dir = workspace / "jenkins"
     if not (jenkins_dir / "ci_runner.py").is_file():
         raise SystemExit(f"hvisor jenkins scripts not found: {jenkins_dir}")
     path = str(jenkins_dir)
-    if path not in sys.path:
-        sys.path.insert(0, path)
+    # Prepend so hvisor jenkins/ci_config.py wins over hvisor_new_test copy.
+    if path in sys.path:
+        sys.path.remove(path)
+    sys.path.insert(0, path)
 
 
 def import_ci_runner():
@@ -232,12 +239,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    ci = load_ci()
-    _ = get_bid_entry(ci, args.bid)
-
     workspace = Path(args.workspace).resolve()
     if not workspace.is_dir():
         raise SystemExit(f"workspace not found: {workspace}")
+
+    setup_hvisor_jenkins(workspace)
+    from ci_config import get_bid_entry, load_ci  # noqa: WPS433 — hvisor jenkins/
+
+    ci = load_ci()
+    _ = get_bid_entry(ci, args.bid)
 
     ptests = [p.strip() for p in args.ptests.split(",") if p.strip()]
     if not ptests:
