@@ -262,7 +262,8 @@ pipeline {
                         ARCH=\$(echo "\${BID}" | cut -d/ -f1)
                         BOARD=\$(echo "\${BID}" | cut -d/ -f2)
                         REPO_ROOT='${env.WORKSPACE}'
-                        ART_DIR="\${REPO_ROOT}/artifacts/\${BID//\\//__}"
+                        ART_SLUG=\$(echo "\${BID}" | sed 's|/|__|g')
+                        ART_DIR="\${REPO_ROOT}/artifacts/\${ART_SLUG}"
                         mkdir -p "\${ART_DIR}"
                         ROOTFS_EXT4="\${HVISOR_SRC}/platform/\${ARCH}/\${BOARD}/image/virtdisk/rootfs1.ext4"
                         MNT="\${HVISOR_SRC}/platform/\${ARCH}/\${BOARD}/image/virtdisk/rootfs"
