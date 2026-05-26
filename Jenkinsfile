@@ -3,7 +3,7 @@ def normalizePtests(raw) {
     if (raw == null) {
         return []
     }
-    if (raw instanceof List || raw.getClass().isArray()) {
+    if (raw instanceof List || raw instanceof String[]) {
         return raw.collect { it.toString().trim() }.findAll { it }
     }
     return raw.toString().split(',').collect { it.toString().trim() }.findAll { it }
