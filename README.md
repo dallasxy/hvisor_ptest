@@ -34,7 +34,8 @@
 
 ### Jenkins 插件
 
-- [Extended Choice Parameter](https://plugins.jenkins.io/extended-choice-parameter/) — 网页多选 ptest
+- [Active Choices](https://plugins.jenkins.io/uno-choice/)（uno-choice v2）— 网页 checkbox 多选 `PTESTS`
+- 首次运行若提示 **Script Security**，在 **Manage Jenkins → Script Approval** 中批准 `return ["irq", "net", "mem", "blk"]` 脚本
 
 ### Jenkins Agent
 
@@ -70,7 +71,7 @@ git push -u origin main
 3. SCM: Git，Repository URL 指向新仓库
 4. Script Path: `Jenkinsfile`
 5. 保存后点击 **Build with Parameters**
-6. 在网页勾选 `PTESTS`（irq / net / mem / blk，可多选）
+6. 在网页 **PTESTS** 复选框中勾选 irq / net / mem / blk（Active Choices `PT_CHECKBOX`）
 7. 选择 `BID`，首次运行保持 `PREPARE_IMAGE` 勾选
 
 ## 本地调试

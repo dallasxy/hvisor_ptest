@@ -1,16 +1,35 @@
+/** Active Choices Plugin v2 (uno-choice): PT_CHECKBOX multi-select for ptests. */
+def normalizePtests(raw) {
+    if (raw == null) {
+        return []
+    }
+    if (raw instanceof List || raw.getClass().isArray()) {
+        return raw.collect { it.toString().trim() }.findAll { it }
+    }
+    return raw.toString().split(',').collect { it.toString().trim() }.findAll { it }
+}
+
 properties([
     parameters([
-        extendedChoice(
-            defaultValue: 'irq',
-            description: 'Select one or more ptest benchmarks (multi-select)',
-            multiSelectDelimiter: ',',
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: 'Select one or more ptest benchmarks (Active Choices)',
             name: 'PTESTS',
-            quoteValue: false,
-            saveJSONParameterToFile: false,
-            type: 'PT_MULTI_SELECT',
-            value: 'irq,net,mem,blk',
-            visibleItemCount: 4,
-        ),
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["irq", "net", "mem", "blk"]',
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["irq", "net", "mem", "blk"]',
+                ],
+            ],
+        ],
         choice(
             name: 'BID',
             choices: ['aarch64/qemu-gicv3', 'riscv64/qemu-plic'],
@@ -58,16 +77,17 @@ pipeline {
         stage('Validate') {
             steps {
                 script {
-                    def selected = (params.PTESTS ?: '').split(',').collect { it.trim() }.findAll { it }
+                    def selected = normalizePtests(params.PTESTS)
                     if (selected.isEmpty()) {
-                        error('PTESTS is empty: select at least one benchmark')
+                        error('PTESTS is empty: select at least one benchmark (irq/net/mem/blk)')
                     }
                     def valid = ['irq', 'net', 'mem', 'blk'] as Set
                     def bad = selected.findAll { !valid.contains(it) }
                     if (!bad.isEmpty()) {
                         error("Invalid ptest(s): ${bad.join(', ')}; use irq|net|mem|blk")
                     }
-                    echo "BID=${params.BID} PTESTS=${selected.join(',')} BRANCH=${params.HVISOR_BRANCH}"
+                    env.SELECTED_PTESTS = selected.join(',')
+                    echo "BID=${params.BID} PTESTS=${env.SELECTED_PTESTS} BRANCH=${params.HVISOR_BRANCH}"
                 }
             }
         }
@@ -89,7 +109,7 @@ pipeline {
                         chmod +x scripts/run_ptests.sh
                         ./scripts/run_ptests.sh \\
                             --bid '${params.BID}' \\
-                            --ptests '${params.PTESTS}' \\
+                            --ptests '${env.SELECTED_PTESTS}' \\
                             --repo '${params.HVISOR_REPO}' \\
                             --branch '${params.HVISOR_BRANCH}' \\
                             --hvisor-src '${env.WORKSPACE}/hvisor-src' \\
