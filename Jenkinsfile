@@ -62,6 +62,7 @@ pipeline {
     }
 
     environment {
+        HVISOR_SRC = "${WORKSPACE}/hvisor-src"
         HVISOR_TOOL_URL = 'https://github.com/syswonder/hvisor-tool.git'
         HVISOR_TOOL_PATH = 'hvisor-tool'
         RUST_HOME = '/usr/local/rustup'
@@ -92,36 +93,98 @@ pipeline {
             }
         }
 
+        stage('Clone hvisor') {
+            steps {
+                sh """
+                    set -eu
+                    export HVISOR_SRC='${env.HVISOR_SRC}'
+                    export HVISOR_REPO='${params.HVISOR_REPO}'
+                    export HVISOR_BRANCH='${params.HVISOR_BRANCH}'
+                    if [ -d "\${HVISOR_SRC}/.git" ]; then
+                        echo "=== Updating hvisor at \${HVISOR_SRC} ==="
+                        git -C "\${HVISOR_SRC}" fetch --depth 1 origin "\${HVISOR_BRANCH}" || git -C "\${HVISOR_SRC}" fetch origin
+                        git -C "\${HVISOR_SRC}" checkout "\${HVISOR_BRANCH}"
+                        git -C "\${HVISOR_SRC}" pull --ff-only origin "\${HVISOR_BRANCH}" 2>/dev/null || true
+                    else
+                        echo "=== Cloning hvisor into \${HVISOR_SRC} ==="
+                        rm -rf "\${HVISOR_SRC}"
+                        git clone --depth 1 --branch "\${HVISOR_BRANCH}" "\${HVISOR_REPO}" "\${HVISOR_SRC}"
+                    fi
+                    test -f "\${HVISOR_SRC}/jenkins/ci_runner.py"
+                    echo "=== hvisor ready: \${HVISOR_SRC} ==="
+                """
+            }
+        }
+
+        stage('Build and prepare') {
+            steps {
+                sh """
+                    export TERM=\${TERM:-xterm}
+                    export HVISOR_SRC='${env.HVISOR_SRC}'
+                    export HVISOR_TOOL_URL='${env.HVISOR_TOOL_URL}'
+                    export HVISOR_TOOL_PATH='${env.HVISOR_TOOL_PATH}'
+                    export CARGO_HOME='${env.CARGO_HOME}'
+                    export QEMU_PATH='${env.QEMU_PATH}'
+                    export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
+                    chmod +x scripts/run_ptests.sh
+                    PREPARE_FLAG=''
+                    if [ '${params.PREPARE_IMAGE}' != 'true' ]; then
+                        PREPARE_FLAG='--no-prepare-image'
+                    fi
+                    ./scripts/run_ptests.sh \\
+                        --bid '${params.BID}' \\
+                        --hvisor-src '${env.HVISOR_SRC}' \\
+                        --build-only \\
+                        \${PREPARE_FLAG}
+                """
+            }
+        }
+
         stage('Run ptests') {
             steps {
-                script {
-                    def prepareFlag = params.PREPARE_IMAGE ? '' : '--no-prepare-image'
-                    sh """
-                        export TERM=\${TERM:-xterm}
-                        export HVISOR_REPO='${params.HVISOR_REPO}'
-                        export HVISOR_BRANCH='${params.HVISOR_BRANCH}'
-                        export HVISOR_SRC='${env.WORKSPACE}/hvisor-src'
-                        export HVISOR_TOOL_URL='${env.HVISOR_TOOL_URL}'
-                        export HVISOR_TOOL_PATH='${env.HVISOR_TOOL_PATH}'
-                        export CARGO_HOME='${env.CARGO_HOME}'
-                        export QEMU_PATH='${env.QEMU_PATH}'
-                        export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
-                        chmod +x scripts/run_ptests.sh
-                        ./scripts/run_ptests.sh \\
-                            --bid '${params.BID}' \\
-                            --ptests '${env.SELECTED_PTESTS}' \\
-                            --repo '${params.HVISOR_REPO}' \\
-                            --branch '${params.HVISOR_BRANCH}' \\
-                            --hvisor-src '${env.WORKSPACE}/hvisor-src' \\
-                            ${prepareFlag}
-                    """
-                }
+                sh """
+                    export TERM=\${TERM:-xterm}
+                    export HVISOR_SRC='${env.HVISOR_SRC}'
+                    export CARGO_HOME='${env.CARGO_HOME}'
+                    export QEMU_PATH='${env.QEMU_PATH}'
+                    export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
+                    python3 ptest_runner.py \\
+                        --bid '${params.BID}' \\
+                        --ptests '${env.SELECTED_PTESTS}' \\
+                        --workspace '${env.HVISOR_SRC}'
+                """
             }
         }
 
         stage('Archive results') {
             steps {
                 script {
+                    sh """
+                        export HVISOR_SRC='${env.HVISOR_SRC}'
+                        BID='${params.BID}'
+                        ARCH=\$(echo "\${BID}" | cut -d/ -f1)
+                        BOARD=\$(echo "\${BID}" | cut -d/ -f2)
+                        REPO_ROOT='${env.WORKSPACE}'
+                        ART_DIR="\${REPO_ROOT}/artifacts/\${BID//\\//__}"
+                        mkdir -p "\${ART_DIR}"
+                        ROOTFS_EXT4="\${HVISOR_SRC}/platform/\${ARCH}/\${BOARD}/image/virtdisk/rootfs1.ext4"
+                        MNT="\${HVISOR_SRC}/platform/\${ARCH}/\${BOARD}/image/virtdisk/rootfs"
+                        case "\${BID}" in
+                            aarch64/qemu-gicv3) HOME_SUB=arm64 ;;
+                            riscv64/qemu-plic) HOME_SUB=riscv64 ;;
+                            *) HOME_SUB= ;;
+                        esac
+                        if [ -f "\${ROOTFS_EXT4}" ] && [ -n "\${HOME_SUB}" ]; then
+                            sudo mkdir -p "\${MNT}"
+                            if sudo mount -t ext4 "\${ROOTFS_EXT4}" "\${MNT}" 2>/dev/null; then
+                                if [ -d "\${MNT}/home/\${HOME_SUB}/test/perfresult" ]; then
+                                    sudo cp -a "\${MNT}/home/\${HOME_SUB}/test/perfresult/." "\${ART_DIR}/" || true
+                                    sudo chown -R \$(id -u):\$(id -g) "\${ART_DIR}" || true
+                                fi
+                                sudo umount "\${MNT}" || true
+                            fi
+                        fi
+                    """
                     def artGlob = "artifacts/${params.BID.replace('/', '__')}/**"
                     if (fileExists('artifacts')) {
                         archiveArtifacts artifacts: artGlob, allowEmptyArchive: true, fingerprint: true

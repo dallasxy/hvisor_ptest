@@ -77,17 +77,13 @@ git push -u origin main
 ## 本地调试
 
 ```bash
-export CARGO_HOME=/usr/local/cargo
-export QEMU_PATH=/path/to/qemu/build
-export TOOLCHAIN_PATHS=/path/to/riscv/bin:/path/to/aarch64/bin
-export WORKSPACE=$(pwd)
-
-pip3 install pyyaml pyserial
+# 需先 clone hvisor 到 hvisor-src/
+git clone --depth 1 --branch main https://github.com/syswonder/hvisor.git hvisor-src
 
 ./scripts/run_ptests.sh \
   --bid aarch64/qemu-gicv3 \
   --ptests irq,mem \
-  --branch main
+  --hvisor-src ./hvisor-src
 ```
 
 单独运行一个 ptest（需已构建 hvisor 并准备好 perf 镜像）：
@@ -101,13 +97,19 @@ python3 ptest_runner.py \
 
 ## 执行流程
 
-1. `run_ptests.sh` 克隆/更新 hvisor 到 `hvisor-src/`
-2. `make all` + 编译 hvisor-tool
-3. `make perf-prepare-img`（可选，首次必选）
-4. 对每个所选 ptest 调用 `ptest_runner.py`：
-   - `make ci-run` 启动 QEMU，串口绑定 `.qemu/qemu.sock`
-   - Python `Terminal` 通过 socket 完成 boot 与 benchmark
-5. 从 rootfs 镜像提取 `perfresult/` 到 `artifacts/` 供 Jenkins 归档
+1. **Validate**：解析 Jenkins 参数（PTESTS / BID / …）
+2. **Clone hvisor**：拉取 hvisor 到 `hvisor-src/`（含 `jenkins/ci_runner.py`）
+3. **Build and prepare**：`make all`、hvisor-tool、`perf-prepare-img`
+4. **Run ptests**：
+   - 调用 hvisor 的 `jenkins/ci_runner.py` 中 **`zone0_start`**（`make ci-run` + qemu.sock）
+   - zone0 就绪后，在同一 QEMU 会话中运行所选 benchmark（mem/irq/net/blk）
+5. 从 rootfs 提取 `perfresult/` 到 `artifacts/` 归档
+
+## 与 hvisor jenkins 的关系
+
+- **zone0 启动**：复用 [`hvisor/jenkins/ci_runner.py`](https://github.com/syswonder/hvisor/blob/main/jenkins/ci_runner.py) 的 `zone0_start`（与主 CI 一致）
+- **benchmark 执行**：`hvisor_new_test/ptest_runner.py` 在 zone0 进入 shell 后运行 `bench_*.sh`
+- 不再使用本地 `terminal.py` 重复实现 boot 逻辑（仍保留文件作参考，运行时 import hvisor jenkins 模块）
 
 ## 与 hvisor 主仓库的关系
 
