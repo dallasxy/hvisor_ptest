@@ -2,7 +2,7 @@
 
 独立 Jenkins 编排仓库，用于在 Jenkins 网页上多选并运行 hvisor 性能基准测试（ptest）。
 
-运行时从 GitHub 克隆 [hvisor](https://github.com/syswonder/hvisor)，通过 **`make ci-run` + UNIX socket** 启动 QEMU（与 hvisor 主仓库新版 Jenkins CI 一致），**不使用** expect + `make run` 旧方式。
+运行时从 GitHub 克隆 [hvisor](https://github.com/dallasxy/hvisor) 的 `config_refactor` 分支，通过 **`make ci-run` + UNIX socket** 启动 QEMU（与 hvisor 主仓库新版 Jenkins CI 一致），**不使用** expect + `make run` 旧方式。
 
 ## 支持的测试
 
@@ -78,7 +78,7 @@ git push -u origin main
 
 ```bash
 # 需先 clone hvisor 到 hvisor-src/
-git clone --depth 1 --branch main https://github.com/syswonder/hvisor.git hvisor-src
+git clone --depth 1 --branch config_refactor https://github.com/dallasxy/hvisor.git hvisor-src
 
 ./scripts/run_ptests.sh \
   --bid aarch64/qemu-gicv3 \

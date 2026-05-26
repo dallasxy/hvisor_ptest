@@ -37,12 +37,12 @@ properties([
         ),
         string(
             name: 'HVISOR_REPO',
-            defaultValue: 'https://github.com/syswonder/hvisor.git',
+            defaultValue: 'https://github.com/dallasxy/hvisor.git',
             description: 'hvisor Git repository URL',
         ),
         string(
             name: 'HVISOR_BRANCH',
-            defaultValue: 'main',
+            defaultValue: 'config_refactor',
             description: 'hvisor branch or tag to clone',
         ),
         booleanParam(
@@ -95,24 +95,44 @@ pipeline {
 
         stage('Clone hvisor') {
             steps {
-                sh """
+                withEnv([
+                    "HVISOR_SRC=${env.HVISOR_SRC}",
+                    "HVISOR_REPO=${params.HVISOR_REPO}",
+                    "HVISOR_BRANCH=${params.HVISOR_BRANCH}",
+                ]) {
+                    sh '''
                     set -eu
-                    export HVISOR_SRC='${env.HVISOR_SRC}'
-                    export HVISOR_REPO='${params.HVISOR_REPO}'
-                    export HVISOR_BRANCH='${params.HVISOR_BRANCH}'
-                    if [ -d "\${HVISOR_SRC}/.git" ]; then
-                        echo "=== Updating hvisor at \${HVISOR_SRC} ==="
-                        git -C "\${HVISOR_SRC}" fetch --depth 1 origin "\${HVISOR_BRANCH}" || git -C "\${HVISOR_SRC}" fetch origin
-                        git -C "\${HVISOR_SRC}" checkout "\${HVISOR_BRANCH}"
-                        git -C "\${HVISOR_SRC}" pull --ff-only origin "\${HVISOR_BRANCH}" 2>/dev/null || true
+                    export HVISOR_SRC="${HVISOR_SRC:?}"
+                    export HVISOR_REPO="${HVISOR_REPO:?}"
+                    export HVISOR_BRANCH="${HVISOR_BRANCH:?}"
+
+                    fresh_clone() {
+                        echo "=== Cloning hvisor: ${HVISOR_REPO} @ ${HVISOR_BRANCH} ==="
+                        rm -rf "${HVISOR_SRC}"
+                        git clone --depth 1 --branch "${HVISOR_BRANCH}" "${HVISOR_REPO}" "${HVISOR_SRC}"
+                    }
+
+                    if [ -d "${HVISOR_SRC}/.git" ]; then
+                        current_url="$(git -C "${HVISOR_SRC}" remote get-url origin 2>/dev/null || true)"
+                        if [ "${current_url}" != "${HVISOR_REPO}" ]; then
+                            echo "=== Remote changed (${current_url} -> ${HVISOR_REPO}), re-cloning ==="
+                            fresh_clone
+                        elif git -C "${HVISOR_SRC}" fetch --depth 1 origin "${HVISOR_BRANCH}" \
+                            && git -C "${HVISOR_SRC}" checkout -f "${HVISOR_BRANCH}" \
+                            && git -C "${HVISOR_SRC}" reset --hard "FETCH_HEAD"; then
+                            echo "=== Updated hvisor at ${HVISOR_SRC} ==="
+                        else
+                            echo "=== Update failed, re-cloning ==="
+                            fresh_clone
+                        fi
                     else
-                        echo "=== Cloning hvisor into \${HVISOR_SRC} ==="
-                        rm -rf "\${HVISOR_SRC}"
-                        git clone --depth 1 --branch "\${HVISOR_BRANCH}" "\${HVISOR_REPO}" "\${HVISOR_SRC}"
+                        fresh_clone
                     fi
-                    test -f "\${HVISOR_SRC}/jenkins/ci_runner.py"
-                    echo "=== hvisor ready: \${HVISOR_SRC} ==="
-                """
+
+                    test -f "${HVISOR_SRC}/jenkins/ci_runner.py"
+                    echo "=== hvisor ready: ${HVISOR_SRC} ($(git -C "${HVISOR_SRC}" rev-parse --short HEAD)) ==="
+                    '''
+                }
             }
         }
 
