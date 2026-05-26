@@ -1,0 +1,10 @@
+bids:
+  - bid: aarch64/qemu-gicv3
+    build_args:
+      KDIR: /home/light/DEMO/linux/linux-5.4
+      TARCH: arm64
+
+  - bid: riscv64/qemu-plic
+    build_args:
+      KDIR: /home/light/DEMO/linux/linux-6.10
+      TARCH: riscv
