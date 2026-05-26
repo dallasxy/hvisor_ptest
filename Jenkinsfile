@@ -30,7 +30,7 @@ properties([
         [
             $class: 'ChoiceParameter',
             choiceType: 'PT_CHECKBOX',
-            description: 'Select one or more ptest benchmarks (Active Choices)',
+            description: 'Optional: select ptest benchmarks; leave empty for zone0_start only',
             name: 'PTESTS',
             script: [
                 $class: 'GroovyScript',
@@ -91,16 +91,15 @@ pipeline {
             steps {
                 script {
                     def selected = normalizePtests(params.PTESTS)
-                    if (selected.isEmpty()) {
-                        error('PTESTS is empty: select at least one benchmark (irq/net/mem/blk)')
-                    }
-                    def valid = ['irq', 'net', 'mem', 'blk'] as Set
-                    def bad = selected.findAll { !valid.contains(it) }
-                    if (!bad.isEmpty()) {
-                        error("Invalid ptest(s): ${bad.join(', ')}; use irq|net|mem|blk")
+                    if (!selected.isEmpty()) {
+                        def valid = ['irq', 'net', 'mem', 'blk'] as Set
+                        def bad = selected.findAll { !valid.contains(it) }
+                        if (!bad.isEmpty()) {
+                            error("Invalid ptest(s): ${bad.join(', ')}; use irq|net|mem|blk")
+                        }
                     }
                     env.SELECTED_PTESTS = selected.join(',')
-                    echo "BID=${params.BID} PTESTS=${env.SELECTED_PTESTS} BRANCH=${params.HVISOR_BRANCH}"
+                    echo "BID=${params.BID} PTESTS=${env.SELECTED_PTESTS ?: '(none, zone0 only)'} BRANCH=${params.HVISOR_BRANCH}"
                 }
             }
         }

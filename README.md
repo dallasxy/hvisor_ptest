@@ -30,7 +30,7 @@
 3. **Compile** — `defconfig` / `dtb` / `make all`（同主 CI）
 4. **Build hvisor-tool** — `bid_config.py` 读 KDIR
 5. **Prepare test** — `TEST_IMG_BASE` + `jenkins/prepare.sh`（同主 CI）
-6. **Run ptests** — `ptest_runner.py`：import `zone0_start` → benchmark → 清理 QEMU
+6. **Run ptests** — `ptest_runner.py`：import `zone0_start`；若选了 PTESTS 则跑 benchmark，否则仅启动 zone0 后退出
 7. **Archive** — 提取 `perfresult/`
 
 ## 本地调试

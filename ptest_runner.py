@@ -237,8 +237,12 @@ def run_ptests(
                 return rc
             record_qemu_pid(cfg)
             time.sleep(5.0)
-        else:
+        elif ptests:
             wait_qemu_socket(cfg["socket_path"], timeout=30.0)
+
+        if not ptests:
+            print("\n============ zone0_start finished (no benchmarks) ============\n", flush=True)
+            return 0
 
         with build_terminal(cfg) as term:
             prepare_zone0_shell(cfg, term, cr)
@@ -266,8 +270,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bid", required=True, help="BID, e.g. aarch64/qemu-gicv3")
     parser.add_argument(
         "--ptests",
-        required=True,
-        help="Comma-separated: irq,net,mem,blk",
+        default="",
+        help="Comma-separated: irq,net,mem,blk (empty = zone0_start only)",
     )
     parser.add_argument(
         "--workspace",
@@ -294,8 +298,6 @@ def main() -> int:
         raise SystemExit(f"workspace not found: {workspace}")
 
     ptests = [p.strip() for p in args.ptests.split(",") if p.strip()]
-    if not ptests:
-        raise SystemExit("no ptests selected")
 
     bad = [p for p in ptests if p not in VALID_PTESTS]
     if bad:
