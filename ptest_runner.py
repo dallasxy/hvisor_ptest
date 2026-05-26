@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run ptests after zone0_start from hvisor jenkins/ci_runner.py."""
+"""Run ptests: zone0_start (imported) + benchmarks in one process."""
 
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -35,7 +37,6 @@ def setup_hvisor_jenkins(workspace: Path) -> None:
     if not (jenkins_dir / "ci_runner.py").is_file():
         raise SystemExit(f"hvisor jenkins scripts not found: {jenkins_dir}")
     path = str(jenkins_dir)
-    # Prepend so hvisor jenkins/ci_config.py wins over hvisor_new_test copy.
     if path in sys.path:
         sys.path.remove(path)
     sys.path.insert(0, path)
@@ -51,6 +52,7 @@ def import_ci_runner():
         run_and_print_quiet_raw,
         run_and_print_send_only,
         terminate_managed_process,
+        wait_qemu_socket,
         zone0_start,
     )
 
@@ -63,20 +65,51 @@ def import_ci_runner():
         "run_and_print_quiet_raw": run_and_print_quiet_raw,
         "run_and_print_send_only": run_and_print_send_only,
         "terminate_managed_process": terminate_managed_process,
+        "wait_qemu_socket": wait_qemu_socket,
         "zone0_start": zone0_start,
     }
 
 
 def make_runtime_config(workspace: Path, bid: str) -> dict[str, Any]:
+    setup_hvisor_jenkins(workspace)
+    from ci_config import get_bid_entry, load_ci  # noqa: WPS433
+
+    entry = get_bid_entry(load_ci(), bid)
     arch, board = parse_bid(bid)
+    qemu_dir = workspace / ".qemu"
+    qemu_dir.mkdir(parents=True, exist_ok=True)
     return {
         "bid": bid,
         "arch": arch,
         "board": board,
-        "mode": "qemu",
+        "mode": str(entry.get("mode", "")).strip(),
         "workspace": workspace,
-        "socket_path": str((workspace / ".qemu" / "qemu.sock").resolve()),
+        "socket_path": str((qemu_dir / "qemu.sock").resolve()),
+        "qemu_pid_path": str((qemu_dir / "qemu.pid").resolve()),
     }
+
+
+def record_qemu_pid(cfg: dict[str, Any]) -> None:
+    proc = cfg.get("_managed_proc")
+    if proc is not None and proc.poll() is None:
+        Path(cfg["qemu_pid_path"]).write_text(str(proc.pid), encoding="ascii")
+
+
+def terminate_qemu(cfg: dict[str, Any], cr: dict[str, Any]) -> None:
+    cr["terminate_managed_process"](cfg)
+    pid_path = Path(cfg["qemu_pid_path"])
+    if not pid_path.is_file():
+        return
+    try:
+        pid = int(pid_path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        pid_path.unlink(missing_ok=True)
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    pid_path.unlink(missing_ok=True)
 
 
 def home_dir(cfg: dict[str, Any]) -> str:
@@ -178,28 +211,34 @@ def run_blk_bench_in_zone1(cfg: dict[str, Any], term: Any, cr: dict[str, Any]) -
     )
 
 
-def run_ptests(cfg: dict[str, Any], ptests: list[str]) -> int:
-    setup_hvisor_jenkins(cfg["workspace"])
+def run_ptests(
+    cfg: dict[str, Any],
+    ptests: list[str],
+    *,
+    skip_zone0: bool,
+    terminate: bool,
+) -> int:
     cr = import_ci_runner()
     zone0_start = cr["zone0_start"]
     build_terminal = cr["build_terminal"]
-    terminate_managed_process = cr["terminate_managed_process"]
+    wait_qemu_socket = cr["wait_qemu_socket"]
     timeout_err = cr["TerminalTimeoutError"]
     cmd_err = cr["TerminalCommandError"]
 
     zone0_tests = [p for p in ptests if p != "blk"]
     has_blk = "blk" in ptests
 
-    print(
-        f"\n============ hvisor ptests ({cfg['bid']}) "
-        f"zone0_start + benchmarks ============\n",
-        flush=True,
-    )
+    print(f"\n============ hvisor ptests ({cfg['bid']}) ============\n", flush=True)
 
     try:
-        rc = zone0_start(cfg, None)
-        if rc != 0:
-            return rc
+        if not skip_zone0:
+            rc = zone0_start(cfg, None)
+            if rc != 0:
+                return rc
+            record_qemu_pid(cfg)
+            time.sleep(5.0)
+        else:
+            wait_qemu_socket(cfg["socket_path"], timeout=30.0)
 
         with build_terminal(cfg) as term:
             prepare_zone0_shell(cfg, term, cr)
@@ -216,12 +255,13 @@ def run_ptests(cfg: dict[str, Any], ptests: list[str]) -> int:
         print(f"[ptest_runner] failed: {exc}", flush=True)
         return 1
     finally:
-        terminate_managed_process(cfg)
+        if terminate:
+            terminate_qemu(cfg, cr)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run ptests using hvisor jenkins/ci_runner.py zone0_start",
+        description="Run ptests: zone0_start (import) + benchmarks via qemu.sock",
     )
     parser.add_argument("--bid", required=True, help="BID, e.g. aarch64/qemu-gicv3")
     parser.add_argument(
@@ -232,7 +272,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workspace",
         required=True,
-        help="hvisor source tree (must contain jenkins/ci_runner.py)",
+        help="hvisor source tree (clone with jenkins/ modules)",
+    )
+    parser.add_argument(
+        "--skip-zone0",
+        action="store_true",
+        help="Skip zone0_start (QEMU must already be running)",
+    )
+    parser.add_argument(
+        "--no-terminate",
+        action="store_true",
+        help="Leave QEMU running after benchmarks",
     )
     return parser.parse_args()
 
@@ -243,12 +293,6 @@ def main() -> int:
     if not workspace.is_dir():
         raise SystemExit(f"workspace not found: {workspace}")
 
-    setup_hvisor_jenkins(workspace)
-    from ci_config import get_bid_entry, load_ci  # noqa: WPS433 — hvisor jenkins/
-
-    ci = load_ci()
-    _ = get_bid_entry(ci, args.bid)
-
     ptests = [p.strip() for p in args.ptests.split(",") if p.strip()]
     if not ptests:
         raise SystemExit("no ptests selected")
@@ -258,7 +302,15 @@ def main() -> int:
         raise SystemExit(f"unsupported ptest(s): {bad}")
 
     cfg = make_runtime_config(workspace, args.bid)
-    return run_ptests(cfg, ptests)
+    if not cfg["mode"]:
+        raise SystemExit(f"BID={args.bid}: tests.mode missing in hvisor jenkins/ci.yaml")
+
+    return run_ptests(
+        cfg,
+        ptests,
+        skip_zone0=args.skip_zone0,
+        terminate=not args.no_terminate,
+    )
 
 
 if __name__ == "__main__":

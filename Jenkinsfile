@@ -9,6 +9,22 @@ def normalizePtests(raw) {
     return raw.toString().split(',').collect { it.toString().trim() }.findAll { it }
 }
 
+def parseBid(String bid) {
+    def parts = (bid ?: '').split('/', 2)
+    if (parts.size() != 2 || !parts[0] || !parts[1]) {
+        error("invalid BID: ${bid}")
+    }
+    return [arch: parts[0], board: parts[1]]
+}
+
+def toolchainPathShell() {
+    return "export PATH=${env.CARGO_HOME}/bin:${env.TOOLCHAIN_PATHS}:\$PATH"
+}
+
+def qemuPathShell() {
+    return "export PATH=${env.QEMU_PATH}:\$PATH"
+}
+
 properties([
     parameters([
         [
@@ -44,11 +60,6 @@ properties([
             name: 'HVISOR_BRANCH',
             defaultValue: 'config_refactor',
             description: 'hvisor branch or tag to clone',
-        ),
-        booleanParam(
-            name: 'PREPARE_IMAGE',
-            defaultValue: true,
-            description: 'Run make perf-prepare-img before ptests (recommended on first run)',
         ),
     ]),
 ])
@@ -137,28 +148,95 @@ pipeline {
             }
         }
 
-        stage('Build and prepare') {
+        stage('Compile') {
             steps {
-                sh """
-                    export TERM=\${TERM:-xterm}
-                    export HVISOR_SRC='${env.HVISOR_SRC}'
-                    export HVISOR_TOOL_URL='${env.HVISOR_TOOL_URL}'
-                    export HVISOR_TOOL_PATH='${env.HVISOR_TOOL_PATH}'
-                    export CARGO_HOME='${env.CARGO_HOME}'
-                    export QEMU_PATH='${env.QEMU_PATH}'
-                    export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
-                    export TEST_IMG_BASE='${env.TEST_IMG_BASE}'
-                    chmod +x scripts/run_ptests.sh
-                    PREPARE_FLAG=''
-                    if [ '${params.PREPARE_IMAGE}' != 'true' ]; then
-                        PREPARE_FLAG='--no-prepare-image'
-                    fi
-                    ./scripts/run_ptests.sh \\
-                        --bid '${params.BID}' \\
-                        --hvisor-src '${env.HVISOR_SRC}' \\
-                        --build-only \\
-                        \${PREPARE_FLAG}
-                """
+                dir("${env.HVISOR_SRC}") {
+                    script {
+                        def bid = parseBid(params.BID)
+                        echo "Compile hvisor [BID=${params.BID}, ARCH=${bid.arch}, BOARD=${bid.board}]"
+                        sh """
+                            ${toolchainPathShell()}
+                            chmod +x tools/kconfig/bootstrap_venv.sh tools/kconfig/host_config.sh tools/kconfig/save_defconfig.sh 2>/dev/null || true
+                            if [ ! -x tools/kconfig/.venv/bin/python ]; then
+                                ./tools/kconfig/bootstrap_venv.sh
+                            fi
+                            make defconfig ARCH=${bid.arch} BOARD=${bid.board}
+                        """
+                        if (bid.arch != 'x86_64') {
+                            sh """
+                                ${toolchainPathShell()}
+                                make dtb ARCH=${bid.arch} BOARD=${bid.board}
+                            """
+                        }
+                        sh """
+                            ${toolchainPathShell()}
+                            make all ARCH=${bid.arch} BOARD=${bid.board} MODE=release
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build hvisor-tool') {
+            steps {
+                dir("${env.HVISOR_SRC}") {
+                    script {
+                        def bid = parseBid(params.BID)
+                        sh """
+                            set -eu
+                            ${toolchainPathShell()}
+                            json=\$(python3 '${env.WORKSPACE}/bid_config.py' --bid '${params.BID}' --hvisor-src '${env.HVISOR_SRC}')
+                            KDIR=\$(echo "\${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['KDIR'])")
+                            TARCH=\$(echo "\${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['TARCH'])")
+                            if [ -z "\${KDIR}" ]; then
+                                echo "ERROR: KDIR missing for BID=${params.BID}"
+                                exit 1
+                            fi
+                            echo "Build hvisor-tool [BID=${params.BID}, TARCH=\${TARCH}, KDIR=\${KDIR}]"
+                            if [ ! -d '${env.HVISOR_TOOL_PATH}/.git' ]; then
+                                mkdir -p '${env.HVISOR_TOOL_PATH}'
+                                git clone --depth 1 '${env.HVISOR_TOOL_URL}' '${env.HVISOR_TOOL_PATH}'
+                            fi
+                            make -C '${env.HVISOR_TOOL_PATH}' all ARCH="\${TARCH}" KDIR="\${KDIR}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Prepare test') {
+            steps {
+                dir("${env.HVISOR_SRC}") {
+                    script {
+                        def bid = parseBid(params.BID)
+                        sh """
+                            set -eu
+                            json=\$(python3 '${env.WORKSPACE}/bid_config.py' --bid '${params.BID}' --hvisor-src '${env.HVISOR_SRC}')
+                            KDIR=\$(echo "\${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['KDIR'])")
+                            MODE=\$(echo "\${json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['mode'])")
+                            if [ -z "\${KDIR}" ] || [ -z "\${MODE}" ]; then
+                                echo "ERROR: BID=${params.BID}: mode and KDIR are required"
+                                exit 1
+                            fi
+                            if [ "\${MODE}" != "qemu" ]; then
+                                echo "ERROR: ptest job only supports mode=qemu (got \${MODE})"
+                                exit 1
+                            fi
+                            external='${env.TEST_IMG_BASE}/${bid.arch}/${bid.board}'
+                            configure='./platform/${bid.arch}/${bid.board}/'
+                            echo "Prepare rootfs [BID=${params.BID}] from \${external}"
+                            cp -r "\${external}/." "\${configure}"
+                            chmod +x jenkins/prepare.sh
+                            sudo -E env \\
+                                ARCH='${bid.arch}' \\
+                                BOARD='${bid.board}' \\
+                                KDIR="\${KDIR}" \\
+                                WORKSPACE_ROOT="\$(pwd)" \\
+                                HVISOR_TOOL_PATH='${env.HVISOR_TOOL_PATH}' \\
+                                jenkins/prepare.sh
+                        """
+                    }
+                }
             }
         }
 
@@ -166,10 +244,8 @@ pipeline {
             steps {
                 sh """
                     export TERM=\${TERM:-xterm}
-                    export HVISOR_SRC='${env.HVISOR_SRC}'
-                    export CARGO_HOME='${env.CARGO_HOME}'
-                    export QEMU_PATH='${env.QEMU_PATH}'
-                    export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
+                    ${toolchainPathShell()}
+                    ${qemuPathShell()}
                     python3 ptest_runner.py \\
                         --bid '${params.BID}' \\
                         --ptests '${env.SELECTED_PTESTS}' \\
@@ -218,6 +294,17 @@ pipeline {
 
     post {
         always {
+            script {
+                sh """
+                    if [ -f '${env.HVISOR_SRC}/.qemu/qemu.pid' ]; then
+                        pid=\$(cat '${env.HVISOR_SRC}/.qemu/qemu.pid' 2>/dev/null || true)
+                        if [ -n "\${pid}" ] && kill -0 "\${pid}" 2>/dev/null; then
+                            kill -TERM "-\${pid}" 2>/dev/null || kill "\${pid}" 2>/dev/null || true
+                        fi
+                        rm -f '${env.HVISOR_SRC}/.qemu/qemu.pid'
+                    fi
+                """
+            }
             echo "Build finished: ${currentBuild.currentResult}"
         }
     }
