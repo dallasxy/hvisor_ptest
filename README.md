@@ -98,8 +98,8 @@ python3 ptest_runner.py \
 ## 执行流程
 
 1. **Validate**：解析 Jenkins 参数（PTESTS / BID / …）
-2. **Clone hvisor**：拉取 hvisor 到 `hvisor-src/`（含 `jenkins/ci_runner.py`）
-3. **Build and prepare**：`make all`、hvisor-tool、`perf-prepare-img`
+2. **Clone hvisor**：拉取 hvisor 到 `hvisor-src/`
+3. **Build and prepare**：`make all`、hvisor-tool；从 **`TEST_IMG_BASE/${ARCH}/${BOARD}`** 复制预置镜像（与主 CI Prepare test 相同），再 `perf-prepare-img`
 4. **Run ptests**：
    - 调用 hvisor 的 `jenkins/ci_runner.py` 中 **`zone0_start`**（`make ci-run` + qemu.sock）
    - zone0 就绪后，在同一 QEMU 会话中运行所选 benchmark（mem/irq/net/blk）

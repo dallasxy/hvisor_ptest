@@ -95,6 +95,35 @@ qemu_path_shell() {
     fi
 }
 
+# Same as hvisor main Jenkinsfile "Prepare test" stage: copy pre-staged images from TEST_IMG_BASE.
+stage_test_img() {
+    TEST_IMG_BASE="${TEST_IMG_BASE:-/home/light/DEMO/syswonder/test_img}"
+    external="${TEST_IMG_BASE}/${ARCH}/${BOARD}"
+    configure="${HVISOR_SRC}/platform/${ARCH}/${BOARD}"
+
+    if [ ! -d "${external}" ]; then
+        echo "ERROR: TEST_IMG_BASE platform dir not found: ${external}"
+        exit 1
+    fi
+
+    echo "=== Staging platform assets from ${external} ==="
+    mkdir -p "${configure}"
+    cp -r "${external}/." "${configure}/"
+
+    # Makefile download-test-img expects flash.img at hvisor repo root; runner.sh uses the same path.
+    if [ -f "${external}/flash.img" ]; then
+        cp -f "${external}/flash.img" "${HVISOR_SRC}/flash.img"
+    elif [ -f "${configure}/flash.img" ]; then
+        cp -f "${configure}/flash.img" "${HVISOR_SRC}/flash.img"
+    fi
+
+    if [ -f "${HVISOR_SRC}/flash.img" ]; then
+        echo "=== flash.img ready at ${HVISOR_SRC}/flash.img (skip wget download) ==="
+    else
+        echo "WARN: flash.img not found under ${external}; make may try network download"
+    fi
+}
+
 build_hvisor() {
     echo "=== Building hvisor ARCH=${ARCH} BOARD=${BOARD} ==="
     cd "${HVISOR_SRC}"
@@ -127,6 +156,7 @@ build_hvisor_tool() {
 prepare_perf_image() {
     echo "=== Preparing perf image (perf-prepare-img) ==="
     cd "${HVISOR_SRC}"
+    stage_test_img
     toolchain_path_shell
     qemu_path_shell
     make perf-prepare-img ARCH="${ARCH}" BOARD="${BOARD}" MODE=release
@@ -167,6 +197,7 @@ if [ "${SKIP_BUILD}" != "true" ]; then
     else
         echo "=== Skipping perf-prepare-img (PREPARE_IMAGE=false) ==="
         cd "${HVISOR_SRC}"
+        stage_test_img
         toolchain_path_shell
         make test-pre ARCH="${ARCH}" BOARD="${BOARD}" MODE=release 2>/dev/null || true
         ./platform/"${ARCH}"/"${BOARD}"/test/systemtest/tcompiledtb.sh

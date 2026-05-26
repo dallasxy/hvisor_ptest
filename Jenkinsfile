@@ -147,6 +147,7 @@ pipeline {
                     export CARGO_HOME='${env.CARGO_HOME}'
                     export QEMU_PATH='${env.QEMU_PATH}'
                     export TOOLCHAIN_PATHS='${env.TOOLCHAIN_PATHS}'
+                    export TEST_IMG_BASE='${env.TEST_IMG_BASE}'
                     chmod +x scripts/run_ptests.sh
                     PREPARE_FLAG=''
                     if [ '${params.PREPARE_IMAGE}' != 'true' ]; then
